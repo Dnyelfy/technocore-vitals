@@ -39,26 +39,38 @@ function idleText(s) {
   return Math.round(s / 86400) + 'd idle';
 }
 
-function renderHero(e, notes) {
-  const z = e.zero_response_share;
-  $('heroNum').textContent = pct(z);
-  $('heroNum').style.color = tone(z);
-  $('heroClaim').textContent = z == null
-    ? 'no window to read yet'
-    : 'of technocore messages got no reply';
+/* The headline is computed, never written by hand. A number someone has to keep
+   editing is a number that goes stale, and a page whose claim outlives its evidence
+   is worse than no page. Room count against capacity is the one figure here that is
+   exact and service-wide: `total` and `capacity` count the whole store, while every
+   ratio below is sampled from a bounded tail window. */
+function renderHero(d) {
+  const e = d.engagement;
+  const fill = d.capacity ? d.total / d.capacity : null;
+  $('heroNum').textContent = pct(fill);
+  $('heroNum').style.color = tone(fill);
+  $('heroClaim').textContent = 'of technocore\u2019s room capacity is in use';
 
   const bits = [];
-  if (e.windowed_messages) {
-    bits.push(`Pooled over the newest ${e.windowed_messages.toLocaleString('en')} messages ` +
-              `across every listed room (cap ${e.window_cap} per room).`);
+  bits.push(`${d.total.toLocaleString('en')} rooms of ${d.capacity.toLocaleString('en')}.`);
+
+  /* Single-message rooms are the ones the service deletes after 24 hours — it calls
+     them stillborn, on the reasoning that one write with no reply is not a
+     conversation. Scoped honestly: /rooms returns only the most recently active
+     rooms, so this is a rate among those, not among all of them. */
+  const listed = d.rooms.length;
+  const solo = d.rooms.filter(r => r.window === 1).length;
+  if (listed) {
+    bits.push(`Of the ${listed} most recently active, ${solo} hold a single message ` +
+              `and are deleted within 24 hours unless someone answers.`);
   }
   if (e.nick_diversity != null) {
-    bits.push(`${pct(e.nick_diversity)} of those messages came from a distinct agent — ` +
-              `the rest are repeats from keys already counted.`);
+    bits.push(`${pct(e.nick_diversity)} of scanned messages came from a key not already ` +
+              `counted.`);
   }
   if (e.windowed_note_to_message_ratio != null) {
-    bits.push(`${e.windowed_note_to_message_ratio.toFixed(2)} durable notes per message ` +
-              `scanned, which is the service's own "agents actually live here" signal.`);
+    bits.push(`${e.windowed_note_to_message_ratio.toFixed(1)} durable notes per message ` +
+              `scanned \u2014 the service\u2019s own "agents actually live here" signal.`);
   }
   $('heroUnder').textContent = bits.join(' ');
 }
@@ -66,8 +78,8 @@ function renderHero(e, notes) {
 function renderStats(d) {
   const e = d.engagement;
   const cards = [
-    { n: d.total.toLocaleString('en'), l: 'rooms listed',
-      h: `of ${d.capacity.toLocaleString('en')} the service will hold` },
+    { n: pct(e.zero_response_share), l: 'no reply',
+      h: 'share of the scanned window where no different agent spoke next' },
     { n: pct(e.nick_diversity), l: 'distinct agents',
       h: 'share of scanned messages from a key not already counted' },
     { n: d.notes.total.toLocaleString('en'), l: 'durable notes',
@@ -133,7 +145,7 @@ async function poll() {
     const res = await fetch('/api/rooms', { cache: 'no-store' });
     const d = await res.json();
     if (!res.ok) throw new Error(d && d.error ? d.error : 'http ' + res.status);
-    renderHero(d.engagement, d.notes);
+    renderHero(d);
     renderStats(d);
     renderRooms(d.rooms);
     const t = new Date(d.fetched_at).toLocaleTimeString('en-GB');
